@@ -147,6 +147,8 @@ INSTALLED_APPS = [
     "cvat.apps.redis_handler",
     "cvat.apps.consensus",
     "cvat.apps.access_tokens",
+    # xcvat: Brain++ nori/ODGT bridge (UI 按钮 -> sidecar HTTP)
+    "cvat.apps.xcvat_bridge",
 ]
 
 SITE_ID = 1

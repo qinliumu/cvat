@@ -55,3 +55,7 @@ if apps.is_installed("cvat.apps.consensus"):
 
 if apps.is_installed("cvat.apps.access_tokens"):
     urlpatterns.append(path("api/", include("cvat.apps.access_tokens.urls")))
+
+# xcvat: Brain++ nori/ODGT bridge endpoints (UI 按钮 -> sidecar)
+if apps.is_installed("cvat.apps.xcvat_bridge"):
+    urlpatterns.append(path("api/", include("cvat.apps.xcvat_bridge.urls")))

@@ -19,7 +19,7 @@ import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-HOST, PORT = "127.0.0.1", 9580
+HOST, PORT = "0.0.0.0", 9580
 SCRIPTS_DIR = "/data/xcvat/xcvat-scripts"
 BUILD_SCRIPT = "/data/xcvat/scripts/build_online_dataset.py"
 CVAT_URL = os.environ.get("CVAT_URL", "http://localhost:8080")
