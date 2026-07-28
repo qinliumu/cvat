@@ -137,6 +137,7 @@ def main():
     ap.add_argument("--pass", dest="password", default="admin")
     ap.add_argument("--bucket", default="s3://jiigan-odt")
     ap.add_argument("--no_accelerate", action="store_true", help="跳过加速(workspace 跑时用)")
+    ap.add_argument("--no_verify", action="store_true", help="跳过 Fetcher 验证(workspace 跑时用)")
     ap.add_argument("--keep_workdir", action="store_true", help="保留中间文件(调试)")
     ap.add_argument("--build_script", default=os.path.expanduser("~/.claude/skills/odgt-data-upload/build_online_dataset.py"))
     args = ap.parse_args()
@@ -163,6 +164,8 @@ def main():
     ]
     if args.no_accelerate:
         cmd.append("--no_accelerate")
+    if args.no_verify:
+        cmd.append("--no_verify")
     print(f"  cmd: {' '.join(cmd)}")
     env = os.environ.copy()
     r = subprocess.run(cmd, env=env)

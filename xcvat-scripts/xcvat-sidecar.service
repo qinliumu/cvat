@@ -1,0 +1,19 @@
+[Unit]
+Description=xcvat sidecar HTTP bridge (nori/ODGT <-> CVAT)
+After=network-online.target xray-proxy.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=CVAT_URL=http://localhost:8080
+Environment=CVAT_USER=admin
+Environment=CVAT_PASS=admin
+ExecStart=/data/env/miniconda3/envs/det/bin/python3 /data/xcvat/xcvat-scripts/sidecar.py
+WorkingDirectory=/data/xcvat
+Restart=on-failure
+RestartSec=3
+StandardOutput=append:/data/xcvat/logs/sidecar.log
+StandardError=append:/data/xcvat/logs/sidecar.log
+
+[Install]
+WantedBy=multi-user.target
