@@ -43,6 +43,22 @@ class CVATClient:
         self.csrf = self.s.cookies.get("csrftoken", "")
         self.h = {"X-CSRFToken": self.csrf}
 
+    def get_task(self, tid):
+        """拿 task 详情(name/owner/size/created_date)供 README 用"""
+        r = self.s.get(f"{self.base}/api/tasks/{tid}")
+        r.raise_for_status()
+        d = r.json()
+        owner = d.get("owner") or {}
+        if isinstance(owner, dict):
+            owner = owner.get("username", "unknown")
+        return {
+            "name": d.get("name", ""),
+            "owner": owner,
+            "size": d.get("size", 0),
+            "created_date": (d.get("created_date") or "")[:10],
+            "labels": [l.get("name", "") for l in d.get("labels", []) if isinstance(l, dict)],
+        }
+
     def export_task(self, tid, save_images=True):
         """导出 task 为 ODGT zip, 返回 zip bytes。
         通过 docker exec 调容器内 export_task(绕过 CVAT 异步导出 API 的复杂性)。
@@ -81,7 +97,7 @@ class CVATClient:
 
 
 def unzip_odgt(zip_bytes, work_dir):
-    """解 ODGT zip, 返回 (image_dir, gt_json_path, n)。
+    """解 ODGT zip, 返回 (image_dir, gt_json_path, n_images, n_boxes)。
     图片到 image_dir/, ODGT 行转成 gt.json (list of {image, gtboxes})。
     匹配: ODGT 行顺序 == 图片顺序(dump_media_files 和 exporter 都按 frame 顺序)。
     """
@@ -124,41 +140,107 @@ def unzip_odgt(zip_bytes, work_dir):
     gt_json_path = os.path.join(work_dir, "gt.json")
     with open(gt_json_path, "w") as f:
         json.dump(gt_records, f, ensure_ascii=False)
-    return image_dir, gt_json_path, len(gt_records)
+    n_boxes = sum(len(r["gtboxes"]) for r in gt_records)
+    return image_dir, gt_json_path, len(gt_records), n_boxes
+
+
+def generate_readme(task_info, group, task, dtype, version, n_images, n_boxes, bucket):
+    """按感知算法组规范生成 README.md, 写到 s3 data/.../version/README.md"""
+    today = version.split("_")[0] if "_" in version else ""
+    content = f"""# {version}
+
+## 基本信息
+
+- 数据版本: {version.split("_v")[1][:3] if "_v" in version else "v001"}
+- 创建日期: {today}
+- 创建人: {task_info.get("owner", "unknown")}
+- 所属任务: {task}
+- 数据类型: {dtype}
+- 算法组: {group}
+- 来源: CVAT task #{task_info.get("task_id", "?")} ({task_info.get("name", "")})
+
+## 数据规模
+
+- 图像数量: {n_images}
+- 标注数量: {n_boxes}
+
+## 数据来源
+
+- CVAT 标注导出(task #{task_info.get("task_id", "?")})
+- 标签: {", ".join(task_info.get("labels", [])) or "未指定"}
+
+## 标注格式
+
+- 标注类型: 矩形框 (Bbox)
+- 坐标格式: 绝对像素 xywh (ODGT 规范)
+- 格式: nori + ODGT (Brain++ 数据体系)
+
+## 相比上一版本的变化
+
+- (待填写)
+
+## 数据限制和已知问题
+
+- (待填写)
+
+## 存储路径
+
+- nori: {bucket}/nori/{group}/{task}/{dtype}/{version}/{version}.nori
+- odgt: {bucket}/odgt/{group}/{task}/{dtype}/{version}/{version}.odgt
+"""
+    readme_s3 = f"{bucket}/data/{group}/{task}/{dtype}/{version}/README.md"
+    from refile import smart_open
+    smart_open(readme_s3, "w").write(content)
+    return readme_s3
 
 
 def main():
-    ap = argparse.ArgumentParser(description="CVAT -> nori/ODGT export")
+    ap = argparse.ArgumentParser(description="CVAT -> nori/ODGT export (感知算法组规范路径)")
     ap.add_argument("--task_id", type=int, required=True)
-    ap.add_argument("--name", required=True, help="数据集名(nori/odgt 文件名)")
-    ap.add_argument("--category", default="cvat/export", help="s3 子路径, 如 xiaomi/test")
+    ap.add_argument("--group", default="det", help="算法组 det/cls/pose/rec")
+    ap.add_argument("--task", default="", help="任务如 fd (空则从 task name 推断)")
+    ap.add_argument("--dtype", default="train_data",
+                    help="数据类型 train_data/val_data/test_data/hardcase_data")
+    ap.add_argument("--version", default="", help="版本目录 (空则自动 YYYYMMDD_v001_<name>)")
     ap.add_argument("--cvat", default="http://localhost:8080")
     ap.add_argument("--user", default="admin")
     ap.add_argument("--pass", dest="password", default="admin")
-    ap.add_argument("--bucket", default="s3://jiigan-odt")
+    ap.add_argument("--bucket", default="s3://perception-data")
     ap.add_argument("--no_accelerate", action="store_true", help="跳过加速(workspace 跑时用)")
     ap.add_argument("--no_verify", action="store_true", help="跳过 Fetcher 验证(workspace 跑时用)")
     ap.add_argument("--keep_workdir", action="store_true", help="保留中间文件(调试)")
-    ap.add_argument("--build_script", default=os.path.expanduser("~/.claude/skills/odgt-data-upload/build_online_dataset.py"))
+    ap.add_argument("--build_script", default="/data/xcvat/scripts/build_online_dataset.py")
     args = ap.parse_args()
 
     work_dir = tempfile.mkdtemp(prefix="cvat_to_nori_")
-    print(f"[1/4] 导出 CVAT task {args.task_id} (ODGT + images)")
+    print(f"[1/5] 导出 CVAT task {args.task_id} (ODGT + images)")
     client = CVATClient(args.cvat, args.user, args.password)
+    task_info = client.get_task(args.task_id)
+    task_info["task_id"] = args.task_id
+    print(f"  task: {task_info['name']}, size: {task_info['size']}, owner: {task_info['owner']}")
+
+    # 自动推断 task(从 task name)
+    task_name = args.task or _infer_task(task_info["name"])
+    # 自动生成 version
+    version = args.version or _make_version(task_info["name"])
+    category = f"{args.group}/{task_name}/{args.dtype}/{version}"
+    name = version
+    print(f"  路径: {args.bucket}/{{nori,odgt,data}}/{category}/")
+
+    print(f"[2/5] 导出 ODGT zip")
     zip_bytes = client.export_task(args.task_id, save_images=True)
     print(f"  zip bytes: {len(zip_bytes)}")
 
-    print(f"[2/4] 解 zip -> 图片 + gt.json")
-    image_dir, gt_json, n_imgs = unzip_odgt(zip_bytes, work_dir)
-    print(f"  {n_imgs} images to {image_dir}")
-    print(f"  gt.json: {gt_json}")
+    print(f"[3/5] 解 zip -> 图片 + gt.json")
+    image_dir, gt_json, n_imgs, n_boxes = unzip_odgt(zip_bytes, work_dir)
+    print(f"  {n_imgs} images, {n_boxes} boxes")
 
-    print(f"[3/4] 调 build_online_dataset.py 打包 nori+ODGT")
+    print(f"[4/5] 调 build_online_dataset.py 打包 nori+ODGT")
     cmd = [
         sys.executable, args.build_script,
         image_dir, gt_json,
-        "--name", args.name,
-        "--category", args.category,
+        "--name", name,
+        "--category", category,
         "--bucket", args.bucket,
         "--gt_format", "json",
     ]
@@ -167,21 +249,51 @@ def main():
     if args.no_verify:
         cmd.append("--no_verify")
     print(f"  cmd: {' '.join(cmd)}")
-    env = os.environ.copy()
-    r = subprocess.run(cmd, env=env)
+    r = subprocess.run(cmd, env=os.environ.copy())
     if r.returncode != 0:
         print(f"  build_online_dataset.py FAILED (exit {r.returncode})")
         sys.exit(1)
 
-    print(f"[4/4] DONE.")
-    print(f"  nori: {args.bucket}/nori/{args.category}/{args.name}.nori")
-    print(f"  odgt: {args.bucket}/odgt/{args.category}/{args.name}.odgt")
-    print(f"  注册到 dataset_groups: \"{args.name}\": \"{args.bucket}/odgt/{args.category}/{args.name}.odgt\"")
+    print(f"[5/5] 生成 README.md")
+    readme_s3 = generate_readme(task_info, args.group, task_name, args.dtype, version,
+                                n_imgs, n_boxes, args.bucket)
+    print(f"  README: {readme_s3}")
+
+    print(f"\n=== DONE ===")
+    print(f"  nori:   {args.bucket}/nori/{category}/{name}.nori")
+    print(f"  odgt:   {args.bucket}/odgt/{category}/{name}.odgt")
+    print(f"  README: {readme_s3}")
     if not args.keep_workdir:
         import shutil
         shutil.rmtree(work_dir, ignore_errors=True)
     else:
         print(f"  workdir kept: {work_dir}")
+
+
+def _infer_task(task_name):
+    """从 CVAT task name 推断任务代码, 如含 face/fd -> fd"""
+    n = (task_name or "").lower()
+    if "face" in n or "fd" in n or "yunet" in n:
+        return "fd"
+    if "mot" in n or "track" in n:
+        return "mot"
+    if "pose" in n or "lmk" in n or "landmark" in n:
+        return "pose"
+    if "cls" in n or "class" in n:
+        return "cls"
+    if "rec" in n:
+        return "rec"
+    return "fd"  # 默认人脸检测
+
+
+def _make_version(task_name):
+    """自动生成版本目录 YYYYMMDD_v001_<sanitized_name>"""
+    from datetime import date
+    today = date.today().strftime("%Y%m%d")
+    # sanitize task name: 小写, 非字母数字替成 _
+    import re
+    safe = re.sub(r"[^a-z0-9]+", "_", (task_name or "cvat").lower()).strip("_")[:30]
+    return f"{today}_v001_{safe}"
 
 
 if __name__ == "__main__":

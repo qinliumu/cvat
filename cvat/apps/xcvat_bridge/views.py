@@ -63,8 +63,11 @@ class ExportView(APIView):
             return Response({"error": "task_id required"}, status=status.HTTP_400_BAD_REQUEST)
         body = {
             "task_id": int(task_id),
-            "name": request.data.get("name", f"cvat_export_{task_id}"),
-            "category": request.data.get("category", "cvat/test"),
+            # 规范路径参数(可选, 不传则 cvat_to_nori 自动生成)
+            "group": request.data.get("group", ""),
+            "task": request.data.get("task", ""),
+            "dtype": request.data.get("dtype", ""),
+            "version": request.data.get("version", ""),
         }
         code, resp = _sidecar("POST", "/export", body)
         return Response(resp, status=code)

@@ -57,21 +57,35 @@ def run_import(job_id, odgt, task_name, max_images):
         jobs[job_id]["log"] = str(e)
 
 
-def run_export(job_id, task_id, name, category):
+def run_export(job_id, task_id, name, category, group, task, dtype, version):
     jobs[job_id]["status"] = "running"
     try:
         cmd = [sys.executable, f"{SCRIPTS_DIR}/cvat_to_nori.py",
-               "--task_id", str(task_id), "--name", name, "--category", category,
+               "--task_id", str(task_id),
                "--cvat", CVAT_URL, "--user", CVAT_USER, "--pass", CVAT_PASS,
                "--no_accelerate", "--no_verify", "--build_script", BUILD_SCRIPT]
+        # 规范路径参数(可选, 不传则 cvat_to_nori 自动生成)
+        if group:
+            cmd += ["--group", group]
+        if task:
+            cmd += ["--task", task]
+        if dtype:
+            cmd += ["--dtype", dtype]
+        if version:
+            cmd += ["--version", version]
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
         jobs[job_id]["log"] = r.stdout + r.stderr
         if r.returncode != 0:
             jobs[job_id]["status"] = "failed"
             return
-        bucket = "s3://jiigan-odt"
-        jobs[job_id]["nori"] = f"{bucket}/nori/{category}/{name}.nori"
-        jobs[job_id]["odgt"] = f"{bucket}/odgt/{category}/{name}.odgt"
+        # 从输出解析路径
+        for line in r.stdout.splitlines():
+            if line.startswith("  nori:"):
+                jobs[job_id]["nori"] = line.split(":", 1)[1].strip()
+            elif line.startswith("  odgt:"):
+                jobs[job_id]["odgt"] = line.split(":", 1)[1].strip()
+            elif line.startswith("  README:"):
+                jobs[job_id]["readme"] = line.split(":", 1)[1].strip()
         jobs[job_id]["status"] = "done"
     except Exception as e:
         jobs[job_id]["status"] = "failed"
@@ -118,14 +132,19 @@ class Handler(BaseHTTPRequestHandler):
 
         elif self.path == "/export":
             task_id = body.get("task_id")
-            name = body.get("name", f"cvat_export_{int(time.time())}")
-            category = body.get("category", "cvat/test")
             if not task_id:
                 self._json(400, {"error": "task_id required"})
                 return
+            # 规范路径参数(可选, 不传则 cvat_to_nori 自动生成)
+            group = body.get("group", "")
+            task = body.get("task", "")
+            dtype = body.get("dtype", "")
+            version = body.get("version", "")
             jid = uuid.uuid4().hex[:12]
-            jobs[jid] = {"status": "queued", "type": "export", "task_id": task_id, "name": name}
-            threading.Thread(target=run_export, args=(jid, task_id, name, category), daemon=True).start()
+            jobs[jid] = {"status": "queued", "type": "export", "task_id": task_id}
+            threading.Thread(target=run_export,
+                             args=(jid, int(task_id), "", "", group, task, dtype, version),
+                             daemon=True).start()
             self._json(202, {"job_id": jid})
         else:
             self._json(404, {"error": "not found"})
