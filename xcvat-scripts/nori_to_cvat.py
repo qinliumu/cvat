@@ -207,69 +207,84 @@ class CVATClient:
 
 
 def main():
-    ap = argparse.ArgumentParser(description="nori/ODGT -> CVAT import")
-    ap.add_argument("--odgt", required=True, help="s3:// ODGT 路径")
+    ap = argparse.ArgumentParser(description="nori/ODGT -> CVAT import (分批流式, 不爆内存)")
+    ap.add_argument("--odgt", required=True)
+    ap.add_argument("--task_name", default="nori_import")
+    ap.add_argument("--max_images", type=int, default=0, help="0=全部")
+    ap.add_argument("--batch_size", type=int, default=500, help="每批图片数(每批一个 task, 防内存爆)")
     ap.add_argument("--cvat", default="http://localhost:8080")
     ap.add_argument("--user", default="admin")
     ap.add_argument("--pass", dest="password", default="admin")
-    ap.add_argument("--task_name", required=True)
-    ap.add_argument("--max_images", type=int, default=0, help="0=全部, >0 只导前N张(调试)")
-    ap.add_argument("--local_dir", default="", help="本地图片目录(调试: 绕过 nori, 按文件名匹配 ID)")
+    ap.add_argument("--local_dir", default="")
     args = ap.parse_args()
 
-    print(f"[1/5] 读 ODGT: {args.odgt}")
+    print("[1/4] 读 ODGT")
     items = parse_odgt(args.odgt)
     if args.max_images > 0:
         items = items[:args.max_images]
-    print(f"  {len(items)} images")
-
     tags = collect_tags(items)
-    print(f"  labels(tags): {tags}")
+    print(f"  {len(items)} images, {len(tags)} labels, batch_size={args.batch_size}")
 
-    print(f"[2/5] 创建 CVAT task: {args.task_name}")
     client = CVATClient(args.cvat, args.user, args.password)
-    tid, label_map = client.create_task(args.task_name, tags)
-    print(f"  task id={tid}, label_map={label_map}")
+    total_batches = (len(items) + args.batch_size - 1) // args.batch_size
+    created_tasks = []
 
-    print(f"[3/5] 拉图 + 上传 CVAT")
-    img_bytes_list = []
-    all_shapes = []  # (frame, tag, box)
-    for i, (nid, w, h, boxes, np) in enumerate(items):
-        try:
-            if args.local_dir:
-                # 本地模式: 用 image basename 或索引名匹配
-                name_candidate = nid.split(",")[-1] if "," in nid else nid
-                data = fetch_image_local(args.local_dir, name_candidate)
-                if data is None:
-                    data = fetch_image_local(args.local_dir, f"img{i}")
-                if data is None:
-                    print(f"  [{i}] skip {nid}: not found in {args.local_dir}")
-                    continue
-            else:
-                data = fetch_image_bytes(nid, np)
-        except Exception as e:
-            print(f"  [{i}] skip {nid}: fetch failed {e}")
+    print(f"[2/4] 分批拉图 + 建 task (共 {total_batches} 批)")
+    for bi in range(total_batches):
+        batch = items[bi*args.batch_size : (bi+1)*args.batch_size]
+        img_bytes_list = []
+        all_shapes = []
+        for i, (nid, w, h, boxes, np) in enumerate(batch):
+            try:
+                if args.local_dir:
+                    name_c = nid.split(",")[-1] if "," in nid else nid
+                    data = fetch_image_local(args.local_dir, name_c) or fetch_image_local(args.local_dir, f"img{i}")
+                    if data is None: continue
+                else:
+                    data = fetch_image_bytes(nid, np)
+                data = ensure_image_bytes(data)
+            except Exception as e:
+                print(f"  [{bi}.{i}] skip {nid}: {e}")
+                continue
+            fname = f"{nid.replace(',', '_')}.jpg"
+            img_bytes_list.append((fname, data))
+            for b in boxes:
+                all_shapes.append((len(img_bytes_list)-1, b.get("tag","object"), b.get("box",[0,0,0,0])))
+        if not img_bytes_list:
+            print(f"  batch {bi+1}/{total_batches}: no images, skip")
             continue
-        data = ensure_image_bytes(data)  # 确保 PIL 能识别 (nori 字节可能需 cv2 转换)
-        fname = f"{nid.replace(',', '_')}.jpg"
-        img_bytes_list.append((fname, data))
-        for b in boxes:
-            all_shapes.append((len(img_bytes_list) - 1, b.get("tag", "object"), b.get("box", [0, 0, 0, 0])))
-        if (i + 1) % 10 == 0:
-            print(f"  fetched {i + 1}/{len(items)}")
+        # 建 task + 上传 + 灌标注
+        tname = f"{args.task_name}_b{bi+1:03d}" if total_batches > 1 else args.task_name
+        tid, label_map = client.create_task(tname, tags)
+        print(f"  batch {bi+1}/{total_batches}: task {tid}, {len(img_bytes_list)} imgs, uploading...", flush=True)
+        size = client.upload_images(tid, img_bytes_list)
+        n = client.put_annotations(tid, all_shapes, label_map)
+        created_tasks.append(tid)
+        print(f"  batch {bi+1}/{total_batches} DONE: task {tid} size={size} boxes={n}", flush=True)
+        # 释放内存
+        img_bytes_list = None
 
-    if not img_bytes_list:
-        raise RuntimeError("没有图片被拉取(全部 fetch 失败), 检查 nori_path 或网络")
-    print(f"  uploading {len(img_bytes_list)} images...")
-    size = client.upload_images(tid, img_bytes_list)
-    print(f"  uploaded, task size={size}")
+    print(f"[3/4] 全部完成")
+    print(f"[4/4] DONE. {len(created_tasks)} tasks: {created_tasks}")
+    print(f"  浏览器: http://localhost:8080 (admin/admin)")
 
-    print(f"[4/5] 灌标注 ({len(all_shapes)} boxes)")
-    n = client.put_annotations(tid, all_shapes, label_map)
-    print(f"  put {n} shapes")
 
-    print(f"[5/5] DONE. task {tid}: {args.cvat}/api/tasks/{tid}")
-    print(f"  浏览器访问: 通过 SSH 隧道打开 http://localhost:8080 (admin/admin)")
+def _infer_task(task_name):
+    n = (task_name or "").lower()
+    if "face" in n or "fd" in n or "yunet" in n: return "fd"
+    if "mot" in n or "track" in n: return "mot"
+    if "pose" in n or "lmk" in n: return "pose"
+    if "cls" in n: return "cls"
+    if "rec" in n: return "rec"
+    return "fd"
+
+
+def _make_version(task_name):
+    from datetime import date
+    import re
+    today = date.today().strftime("%Y%m%d")
+    safe = re.sub(r"[^a-z0-9]+", "_", (task_name or "cvat").lower()).strip("_")[:30]
+    return f"{today}_v001_{safe}"
 
 
 if __name__ == "__main__":

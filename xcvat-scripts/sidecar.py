@@ -82,7 +82,7 @@ def run_import(job_id, odgt, task_name, max_images):
             rlaunch_cmd = [
                 "/kubebrain/rlaunch", "-n", "megvii-jg",
                 "--charged-group=is_jg_bokeh",
-                "--cpu=2", "--gpu=0", "--memory=4096",
+                "--cpu=2", "--gpu=0", "--memory=16384",
                 "--replica-restart=on-failure", "--max-wait-duration=30m",
                 f"--job-name=xcvat-import-{job_id}",
                 "--", "bash", "-lc", pod_cmd,
