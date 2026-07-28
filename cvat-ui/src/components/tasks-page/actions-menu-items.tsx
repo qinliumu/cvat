@@ -20,6 +20,7 @@ interface MenuItemsData {
     onOpenBugTracker: (() => void) | null;
     onUploadAnnotations: () => void;
     onExportDataset: () => void;
+    onExportNori: () => void;
     onBackupTask: () => void;
     onRunAutoAnnotation: (() => void) | null;
     onMoveTaskToProject: () => void;
@@ -43,6 +44,7 @@ export default function TaskActionsItems(menuItemsData: MenuItemsData, taskMenuP
         onMergeConsensusJobs,
         onUploadAnnotations,
         onExportDataset,
+        onExportNori,
         onOpenBugTracker,
         onBackupTask,
         onRunAutoAnnotation,
@@ -68,6 +70,14 @@ export default function TaskActionsItems(menuItemsData: MenuItemsData, taskMenuP
         label: withCount('Export task dataset', 'export_task_dataset'),
         disabled: isDisabled('export_task_dataset'),
     }, 10]);
+
+    // xcvat: Export to Brain++ nori/ODGT (调 /api/xcvat/export -> sidecar)
+    menuItems.push([{
+        key: 'export_nori',
+        onClick: onExportNori,
+        label: withCount('Export to nori/ODGT', 'export_nori'),
+        disabled: isDisabled('export_nori'),
+    }, 15]);
 
     if (onOpenBugTracker) {
         menuItems.push([{

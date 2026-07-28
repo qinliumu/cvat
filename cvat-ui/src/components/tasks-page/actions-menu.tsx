@@ -19,6 +19,7 @@ import { exportActions } from 'actions/export-actions';
 import { importActions } from 'actions/import-actions';
 import { modelsActions } from 'actions/models-actions';
 import { mergeConsensusJobsAsync } from 'actions/consensus-actions';
+import { exportNoriAsync } from 'actions/xcvat-actions';
 
 import {
     deleteTaskAsync, getTasksAsync, switchMoveTaskModalVisible, updateTaskAsync,
@@ -102,6 +103,11 @@ function TaskActionsComponent(props: Readonly<Props>): JSX.Element {
 
     const onBackupTask = useCallback(() => {
         dispatch(exportActions.openExportBackupModal(taskInstance));
+    }, [taskInstance]);
+
+    // xcvat: Export to Brain++ nori/ODGT via sidecar
+    const onExportNori = useCallback(() => {
+        dispatch(exportNoriAsync(taskInstance));
     }, [taskInstance]);
 
     const onUploadAnnotations = useCallback(() => {
@@ -263,6 +269,7 @@ function TaskActionsComponent(props: Readonly<Props>): JSX.Element {
             onOpenBugTracker: taskInstance.bugTracker ? onOpenBugTracker : null,
             onUploadAnnotations,
             onExportDataset,
+            onExportNori,
             onBackupTask,
             onRunAutoAnnotation,
             onMoveTaskToProject,
