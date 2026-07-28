@@ -4,28 +4,32 @@
 
 ## 当前任务
 
-阶段 0(git 基础设施)完成。下一步:阶段 1,写 ODGT format 文件。
+阶段 1(ODGT format)核心完成:代码已写+注册+push。端到端导出验证待补(需带标注 task,卡在 CVAT v2.71 TUS 上传机制)。下一步:探索 TUS 上传 或 用 ORM 造 task 验证 export,然后进阶段 2。
 
 ## 已完成
 
-- [x] CVAT 部署到 hermes(18 容器全 Up,admin/admin,SSH 隧道访问 localhost:8080)
-- [x] 阶段 0:GitHub fork(qinliumu/cvat)+ remote 调整(SSH)+ xcvat/main 分支 + 首个 commit
-- [x] 记忆设施:CLAUDE.md + docs/(已提交 b2c081057)
+- [x] CVAT 部署到 hermes(18 容器,admin/admin,SSH 隧道)
+- [x] 阶段 0:GitHub fork(qinliumu/cvat)+ xcvat/main 分支 + SSH key + 首批 commit
+- [x] 阶段 1 核心代码:`formats/odgt.py`(export+import,187 行)+ registry.py 注册
+- [x] 容器内验证:EXPORT_FORMATS/IMPORT_FORMATS 含 ODGT,CVAT 前端下拉会出现 ODGT
+- [x] commit `5a37dd374` push 到 fork
 
-## 下一步(阶段 1:ODGT format)
+## 阶段 1 待补
 
-- [ ] 写 `cvat/apps/dataset_manager/formats/odgt.py`(参考 widerface.py + odgt skill 规范)
-- [ ] registry.py 注册
-- [ ] 重建 cvat/server 镜像 或 volume 挂载热加载
-- [ ] 验证:CVAT 导出/导入格式下拉出现 ODGT
-- [ ] commit + push 到 fork
+- [ ] 端到端导出验证:创建带标注 task → 导出 ODGT → 检查 JSON-lines 正确性
+  - 卡点:CVAT v2.71 用 TUS 协议上传图片(非简单 multipart),需探索 TUS 或用 ORM 造 task
+- [ ] 端到端导入验证:ODGT zip → 导入 CVAT → 看图片+框
 
-## 阶段路线(已批准方案)
+## 下一步
 
-- 阶段 1:ODGT format 文件(容器内)← 进行中
-- 阶段 2:nori→CVAT 导入脚本(宿主机 det 环境)
-- 阶段 3:CVAT→nori/ODGT 导出脚本(宿主机)
-- 阶段 4:UI 按钮 + sidecar HTTP 服务
+- [ ] 解 TUS 上传 或 ORM 造 task,完成阶段 1 端到端验证
+- [ ] 阶段 2:nori→CVAT 导入脚本(宿主机 det 环境)
+- [ ] 阶段 3:CVAT→nori/ODGT 导出脚本
+- [ ] 阶段 4:UI 按钮 + sidecar
+
+## 持久化注意
+
+- 容器内代码是 docker cp 进去的(临时),重建容器会丢。**需做 volume 挂载源码**(改 compose 把宿主机 `/data/xcvat/cvat/cvat/` 挂到容器 `/home/django/cvat/`),作为持久开发环境。这是阶段 1 收尾必做项。
 
 ## 已完成
 

@@ -1,0 +1,30 @@
+# xcvat: 开发覆盖 — 把宿主机源码挂进容器,改源码重启即生效,不用重建镜像
+# 仅 xcvat 用,compose 自动加载 docker-compose.override.yml
+services:
+  cvat_server:
+    volumes:
+      - /data/xcvat/cvat/cvat:/home/django/cvat
+  cvat_worker_utils:
+    volumes:
+      - /data/xcvat/cvat/cvat:/home/django/cvat
+  cvat_worker_import:
+    volumes:
+      - /data/xcvat/cvat/cvat:/home/django/cvat
+  cvat_worker_export:
+    volumes:
+      - /data/xcvat/cvat/cvat:/home/django/cvat
+  cvat_worker_annotation:
+    volumes:
+      - /data/xcvat/cvat/cvat:/home/django/cvat
+  cvat_worker_webhooks:
+    volumes:
+      - /data/xcvat/cvat/cvat:/home/django/cvat
+  cvat_worker_quality_reports:
+    volumes:
+      - /data/xcvat/cvat/cvat:/home/django/cvat
+  cvat_worker_chunks:
+    volumes:
+      - /data/xcvat/cvat/cvat:/home/django/cvat
+  cvat_worker_consensus:
+    volumes:
+      - /data/xcvat/cvat/cvat:/home/django/cvat
