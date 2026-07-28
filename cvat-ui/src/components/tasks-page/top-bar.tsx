@@ -65,6 +65,7 @@ export default function TopBarComponent(props: Readonly<VisibleTopBarProps>): JS
     }, [importing]);
 
     return (
+        <>
         <Row className='cvat-tasks-page-top-bar cvat-resource-top-bar-wrapper' justify='center' align='middle'>
             <Col {...dimensions}>
                 <div className='cvat-tasks-page-filters-wrapper'>
@@ -149,13 +150,6 @@ export default function TopBarComponent(props: Readonly<VisibleTopBarProps>): JS
                                 >
                                     Import from nori/ODGT
                                 </Button>
-                                <XcvatImportModal
-                                    visible={xcvatImportVisible}
-                                    onClose={(): void => setXcvatImportVisible(false)}
-                                    onImport={(params): void => {
-                                        dispatch(importNoriAsync(params.odgt, params.task_name, params.max_images));
-                                    }}
-                                />
                                 <Button
                                     className='cvat-import-task-button'
                                     type='primary'
@@ -173,5 +167,13 @@ export default function TopBarComponent(props: Readonly<VisibleTopBarProps>): JS
                 </div>
             </Col>
         </Row>
+        <XcvatImportModal
+            visible={xcvatImportVisible}
+            onClose={(): void => setXcvatImportVisible(false)}
+            onImport={(params): void => {
+                dispatch(importNoriAsync(params.odgt, params.task_name, params.max_images));
+            }}
+        />
+        </>
     );
 }
