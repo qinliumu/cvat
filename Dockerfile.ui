@@ -5,6 +5,8 @@ ENV TERM=xterm \
     LC_ALL='C.UTF-8'
 
 # Install dependencies
+# xcvat: NODE_USE_ENV_PROXY=1 让 node 24 fetch 读 HTTP_PROXY (corepack 下载 yarn 走代理)
+ENV NODE_USE_ENV_PROXY=1
 RUN npm install -g corepack
 COPY .yarnrc.yml /tmp/
 COPY package.json /tmp/
