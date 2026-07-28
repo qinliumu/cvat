@@ -98,7 +98,8 @@ class CVATClient:
         """创建 task, 返回 (task_id, label_name->id map)"""
         body = {"name": name, "labels": [{"name": l} for l in labels]}
         r = self.s.post(f"{self.base}/api/tasks", json=body, headers=self.h)
-        r.raise_for_status()
+        if r.status_code >= 400:
+            raise RuntimeError(f"create_task HTTP {r.status_code}: {r.text[:300]}")
         tid = r.json()["id"]
         # 查 label id: task 的 labels 是 URL 引用, 要查 /api/labels?task_id=
         time.sleep(1)
@@ -116,7 +117,8 @@ class CVATClient:
             files[f"client_files[{i}]"] = (name, data)
         r = self.s.post(f"{self.base}/api/tasks/{tid}/data",
                         files=files, data={"image_quality": 95}, headers=self.h)
-        r.raise_for_status()
+        if r.status_code >= 400:
+            raise RuntimeError(f"upload_images HTTP {r.status_code}: {r.text[:300]}")
         # 等异步处理
         for _ in range(60):
             time.sleep(2)

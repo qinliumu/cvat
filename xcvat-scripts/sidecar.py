@@ -50,6 +50,7 @@ def run_import(job_id, odgt, task_name, max_images):
         jobs[job_id]["log"] = (r.stdout + r.stderr)[-3000:]
         if r.returncode != 0:
             jobs[job_id]["status"] = "failed"
+            jobs[job_id]["error"] = (r.stderr or r.stdout)[-500:]
             return
         for line in r.stdout.splitlines():
             if "task id=" in line:
@@ -81,6 +82,7 @@ def run_export(job_id, task_id, name, category, group, task, dtype, version):
         jobs[job_id]["log"] = r.stdout + r.stderr
         if r.returncode != 0:
             jobs[job_id]["status"] = "failed"
+            jobs[job_id]["error"] = (r.stderr or r.stdout)[-500:]
             return
         # 从输出解析路径
         for line in r.stdout.splitlines():
@@ -108,6 +110,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/health":
             self._json(200, {"status": "ok", "jobs": len(jobs)})
+        elif self.path == "/jobs":
+            self._json(200, [{"jid": k, "status": v.get("status"), "type": v.get("type"), "error": v.get("error","")[-300:], "task_id": v.get("task_id")} for k, v in jobs.items()])
         elif self.path.startswith("/status/"):
             jid = self.path.split("/status/")[1]
             self._json(200, jobs.get(jid, {"status": "not_found"}))
