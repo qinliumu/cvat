@@ -81,6 +81,45 @@ def fetch_image_local(local_dir, image_id):
     return None
 
 
+def ensure_image_bytes(data):
+    """nori Fetcher 可能返回 pickle 包装对象, 解包取 img, 再确保 PIL 能识别."""
+    import io
+    # pickle 协议头 0x80, 解包取 img 字段
+    if len(data) > 0 and data[0] == 0x80:
+        try:
+            import pickle as _pkl
+            obj = _pkl.loads(data)
+            if isinstance(obj, dict) and "img" in obj:
+                data = obj["img"]
+            elif isinstance(obj, (bytes, bytearray)):
+                data = bytes(obj)
+            elif hasattr(obj, "tobytes"):
+                data = obj.tobytes()
+            print(f"    pickle unpacked -> {len(data)} bytes", flush=True)
+        except Exception as _e:
+            print(f"    pickle unpack failed: {_e}", flush=True)
+    # 验证 PIL
+    try:
+        from PIL import Image as _PIL
+        _PIL.open(io.BytesIO(data)).verify()
+        return data
+    except Exception:
+        pass
+    # cv2 imdecode 兜底
+    try:
+        import numpy as _np
+        import cv2 as _cv2
+        arr = _np.frombuffer(data, dtype=_np.uint8)
+        img = _cv2.imdecode(arr, _cv2.IMREAD_COLOR)
+        if img is None:
+            raise RuntimeError(f"cannot decode: {len(data)} bytes, hex: {data[:32].hex()}")
+        ok, buf = _cv2.imencode(".jpg", img)
+        if not ok:
+            raise RuntimeError("cv2 imencode failed")
+        return buf.tobytes()
+    except ImportError:
+        raise RuntimeError("cv2 not available")
+
 class CVATClient:
     def __init__(self, base_url, user, password):
         self.base = base_url.rstrip("/")
@@ -116,24 +155,36 @@ class CVATClient:
         return tid, label_map
 
     def upload_images(self, tid, image_bytes_list):
-        """上传图片(client_files[N] 格式), 等异步处理完成"""
+        """上传图片(client_files[N] 格式), 带进度 + 超时诊断"""
         files = {}
+        total_bytes = 0
         for i, (name, data) in enumerate(image_bytes_list):
             files[f"client_files[{i}]"] = (name, data)
+            total_bytes += len(data)
+        print(f"  upload: {len(image_bytes_list)} files, {total_bytes} bytes, POST...", flush=True)
+        # POST 加 timeout (防无限卡), 打印响应
         r = self.s.post(f"{self.base}/api/tasks/{tid}/data",
-                        files=files, data={"image_quality": 95}, headers=self.h)
+                        files=files, data={"image_quality": 95}, headers=self.h, timeout=120)
+        print(f"  POST response: {r.status_code} {r.text[:150]}", flush=True)
         if r.status_code >= 400:
             raise RuntimeError(f"upload_images HTTP {r.status_code}: {r.text[:300]}")
-        # 等异步处理
-        for _ in range(60):
-            time.sleep(2)
-            st = self.s.get(f"{self.base}/api/tasks/{tid}").json()
+        # 等异步处理, 打印每轮进度
+        import time as _t
+        for i in range(150):  # 300s 超时
+            _t.sleep(2)
+            try:
+                st = self.s.get(f"{self.base}/api/tasks/{tid}", timeout=15).json()
+            except Exception as e:
+                print(f"  [{i}] GET status err: {e}", flush=True)
+                continue
             sz = st.get("size", 0)
+            status = st.get("status", "?")
+            print(f"  [{i}] size={sz} status={status}", flush=True)
             if sz > 0:
                 return sz
-            if st.get("status") == "Failed":
+            if status == "Failed":
                 raise RuntimeError(f"task {tid} upload failed: {st}")
-        raise TimeoutError(f"task {tid} upload timeout")
+        raise TimeoutError(f"task {tid} upload timeout (300s, last status={status} size={sz})")
 
     def put_annotations(self, tid, shapes, label_map):
         """灌标注. shapes: [(frame, tag, box[x,y,w,h]), ...] -> points[x1,y1,x2,y2]"""
@@ -199,6 +250,7 @@ def main():
         except Exception as e:
             print(f"  [{i}] skip {nid}: fetch failed {e}")
             continue
+        data = ensure_image_bytes(data)  # 确保 PIL 能识别 (nori 字节可能需 cv2 转换)
         fname = f"{nid.replace(',', '_')}.jpg"
         img_bytes_list.append((fname, data))
         for b in boxes:
