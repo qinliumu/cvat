@@ -78,6 +78,7 @@ class CVATClient:
         self.password = password
         import requests
         self.s = requests.Session()
+        self.s.headers.update({"Host": "localhost"})  # xcvat: pod 访问 workspace IP 但 Host=localhost (traefik 规则)
         self._login()
 
     def _login(self):

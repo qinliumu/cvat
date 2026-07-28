@@ -29,6 +29,10 @@ CVAT_USER = os.environ.get("CVAT_USER", "admin")
 CVAT_PASS = os.environ.get("CVAT_PASS", "admin")
 LOGS_DIR = "/data/xcvat/logs"
 
+# rlaunch/brainctl 在 /kubebrain, systemd 默认 PATH 不含它, 加上
+if "/kubebrain" not in os.environ.get("PATH", ""):
+    os.environ["PATH"] = "/kubebrain:" + os.environ.get("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+
 # job 存储 (进程内, 简单起见; 重启丢失)
 jobs = {}
 
@@ -54,7 +58,7 @@ def run_import(job_id, odgt, task_name, max_images):
         rlaunch_cmd = [
             "/kubebrain/rlaunch", "-n", "megvii-jg",
             "--charged-group=is_jg_bokeh",
-            "--cpu=2", "--gpu=0", "--memory=8192",
+            "--cpu=1", "--gpu=0", "--memory=4096",
             "--replica-restart=on-failure",
             "--max-wait-duration=30m",
             f"--job-name=xcvat-import-{job_id}",
