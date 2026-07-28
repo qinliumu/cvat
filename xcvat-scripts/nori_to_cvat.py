@@ -138,9 +138,22 @@ class CVATClient:
         self.csrf = self.s.cookies.get("csrftoken", "")
         self.h = {"X-CSRFToken": self.csrf}
 
-    def create_task(self, name, labels):
-        """创建 task, 返回 (task_id, label_name->id map)"""
+    def create_project(self, name, labels):
+        """建 project (同数据集 task 归类), 返回 project_id"""
         body = {"name": name, "labels": [{"name": l} for l in labels]}
+        r = self.s.post(f"{self.base}/api/projects", json=body, headers={**self.h, "Content-Type": "application/json"})
+        if r.status_code >= 400:
+            print(f"  project create HTTP {r.status_code}: {r.text[:200]}")
+            return None
+        return r.json().get("id")
+
+    def create_task(self, name, labels, project_id=None, segment_size=500):
+        """创建 task, 返回 (task_id, label_name->id map)"""
+        body = {"name": name, "segment_size": segment_size}
+        if project_id:
+            body["project_id"] = project_id  # 继承 project 的 labels
+        else:
+            body["labels"] = [{"name": l} for l in labels]
         r = self.s.post(f"{self.base}/api/tasks", json=body, headers=self.h)
         if r.status_code >= 400:
             raise RuntimeError(f"create_task HTTP {r.status_code}: {r.text[:300]}")
@@ -226,6 +239,10 @@ def main():
     print(f"  {len(items)} images, {len(tags)} labels, batch_size={args.batch_size}")
 
     client = CVATClient(args.cvat, args.user, args.password)
+    # 建 project (同数据集 task 归类, 便于多人协作认领)
+    project_id = client.create_project(args.task_name, tags)
+    if project_id:
+        print(f"  project {project_id}: {args.task_name}")
     total_batches = (len(items) + args.batch_size - 1) // args.batch_size
     created_tasks = []
 
@@ -255,7 +272,7 @@ def main():
             continue
         # 建 task + 上传 + 灌标注
         tname = f"{args.task_name}_b{bi+1:03d}" if total_batches > 1 else args.task_name
-        tid, label_map = client.create_task(tname, tags)
+        tid, label_map = client.create_task(tname, tags, project_id=project_id, segment_size=args.batch_size)
         print(f"  batch {bi+1}/{total_batches}: task {tid}, {len(img_bytes_list)} imgs, uploading...", flush=True)
         size = client.upload_images(tid, img_bytes_list)
         n = client.put_annotations(tid, all_shapes, label_map)
