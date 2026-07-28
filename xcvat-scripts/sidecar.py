@@ -38,29 +38,86 @@ jobs = {}
 
 
 def run_import(job_id, odgt, task_name, max_images):
-    """workspace 直接跑 nori_to_cvat.py (直读取图, 不用 rlaunch pod)"""
+    """导入: 有 nori_path -> workspace 直读 (快); 无 -> rlaunch pod (Fetcher)"""
     jobs[job_id]["status"] = "running"
     try:
-        cmd = [sys.executable, f"{SCRIPTS_DIR}/nori_to_cvat.py",
-               "--odgt", odgt, "--task_name", task_name,
-               "--cvat", CVAT_URL, "--user", CVAT_USER, "--pass", CVAT_PASS]
-        if max_images and max_images > 0:
-            cmd += ["--max_images", str(max_images)]
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
-        jobs[job_id]["log"] = (r.stdout + r.stderr)[-3000:]
-        if r.returncode != 0:
-            jobs[job_id]["status"] = "failed"
-            jobs[job_id]["error"] = (r.stderr or r.stdout)[-500:]
-            return
-        for line in r.stdout.splitlines():
-            if "task id=" in line:
-                tid = line.split("task id=")[-1].split(",")[0].strip()
-                try: jobs[job_id]["task_id"] = int(tid)
-                except: pass
-        jobs[job_id]["status"] = "done"
+        # 读 ODGT 首行判断有无 nori_path
+        from refile import smart_open
+        import json as _json
+        first = smart_open(odgt).readline()
+        has_nori_path = bool(_json.loads(first).get("nori_path")) if first else False
+        jobs[job_id]["mode"] = "direct" if has_nori_path else "rlaunch_pod"
+
+        if has_nori_path:
+            # workspace 直读 (nori.open(r).get)
+            cmd = [sys.executable, f"{SCRIPTS_DIR}/nori_to_cvat.py",
+                   "--odgt", odgt, "--task_name", task_name,
+                   "--cvat", CVAT_URL, "--user", CVAT_USER, "--pass", CVAT_PASS]
+            if max_images and max_images > 0:
+                cmd += ["--max_images", str(max_images)]
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+            jobs[job_id]["log"] = (r.stdout + r.stderr)[-3000:]
+            if r.returncode != 0:
+                jobs[job_id]["status"] = "failed"
+                jobs[job_id]["error"] = (r.stderr or r.stdout)[-500:]
+                return
+            for line in r.stdout.splitlines():
+                if "task id=" in line:
+                    tid = line.split("task id=")[-1].split(",")[0].strip()
+                    try: jobs[job_id]["task_id"] = int(tid)
+                    except: pass
+            jobs[job_id]["status"] = "done"
+        else:
+            # 无 nori_path, rlaunch pod (Fetcher, cpu=2 走 cpu 节点)
+            log_file = f"{LOGS_DIR}/import_{job_id}.log"
+            pod_cmd = (
+                f"source /data/env/miniconda3/etc/profile.d/conda.sh && conda activate det && "
+                f"cd /data/xcvat && python3 -u xcvat-scripts/nori_to_cvat.py "
+                f"--odgt '{odgt}' --task_name '{task_name}' "
+                f"--cvat {CVAT_POD_URL} --user {CVAT_USER} --pass {CVAT_PASS}"
+            )
+            if max_images and max_images > 0:
+                pod_cmd += f" --max_images {int(max_images)}"
+            pod_cmd += f" > {log_file} 2>&1"
+            rlaunch_cmd = [
+                "/kubebrain/rlaunch", "-n", "megvii-jg",
+                "--charged-group=is_jg_bokeh",
+                "--cpu=2", "--gpu=0", "--memory=4096",
+                "--replica-restart=on-failure", "--max-wait-duration=30m",
+                f"--job-name=xcvat-import-{job_id}",
+                "--", "bash", "-lc", pod_cmd,
+            ]
+            with open(f"{LOGS_DIR}/rlaunch_{job_id}.log", "w") as rl:
+                subprocess.Popen(["nohup"] + rlaunch_cmd, stdout=rl, stderr=rl,
+                                 stdin=subprocess.DEVNULL, start_new_session=True)
+            jobs[job_id]["log_file"] = log_file
+            import time as _t
+            t0 = _t.time()
+            while _t.time() - t0 < 1800:
+                _t.sleep(5)
+                try:
+                    with open(log_file, "r") as f:
+                        content = f.read()
+                except FileNotFoundError:
+                    content = ""
+                jobs[job_id]["log"] = content[-2000:]
+                if "DONE" in content or "=== DONE ===" in content:
+                    for line in content.splitlines():
+                        if "task id=" in line:
+                            tid = line.split("task id=")[-1].split(",")[0].strip()
+                            try: jobs[job_id]["task_id"] = int(tid)
+                            except: pass
+                    jobs[job_id]["status"] = "done"
+                    return
+                if "Traceback" in content and "Error" in content:
+                    jobs[job_id]["status"] = "failed"
+                    jobs[job_id]["error"] = content[-500:]
+                    return
+            jobs[job_id]["status"] = "timeout"
+            jobs[job_id]["error"] = "rlaunch pod 30min 超时"
     except Exception as e:
         jobs[job_id]["status"] = "failed"
-        jobs[job_id]["log"] = str(e)
+        jobs[job_id]["error"] = str(e)
 
 def run_export(job_id, task_id, name, category, group, task, dtype, version):
     jobs[job_id]["status"] = "running"

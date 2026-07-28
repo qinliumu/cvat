@@ -58,13 +58,18 @@ def collect_tags(items):
 
 _nori_readers = {}
 def fetch_image_bytes(nori_id, nori_path=None):
-    """直读取图 (nori.open(r).get, 不走 Fetcher, workspace 可用, 0.6s/图)"""
+    """取图: 有 nori_path 直读 (workspace 可用), 无则 Fetcher (需 rlaunch pod)"""
     import nori2
-    if not nori_path:
-        raise RuntimeError("nori_path required for direct read")
-    if nori_path not in _nori_readers:
-        _nori_readers[nori_path] = nori2.open(nori_path, "r")
-    return _nori_readers[nori_path].get(nori_id)
+    if nori_path:
+        # 直读 (workspace 能用, 0.6s/图)
+        if nori_path not in _nori_readers:
+            _nori_readers[nori_path] = nori2.open(nori_path, "r")
+        return _nori_readers[nori_path].get(nori_id)
+    else:
+        # 无 nori_path, 用 Fetcher 全局取 (workspace 卡死, 需 rlaunch pod)
+        if not hasattr(fetch_image_bytes, "_fetcher"):
+            fetch_image_bytes._fetcher = nori2.Fetcher()
+        return fetch_image_bytes._fetcher.get(nori_id)
 
 
 def fetch_image_local(local_dir, image_id):
@@ -176,17 +181,6 @@ def main():
     print(f"  task id={tid}, label_map={label_map}")
 
     print(f"[3/5] 拉图 + 上传 CVAT")
-    # 检查 ODGT 是否有 nori_path (直读需要; 无则报错)
-    if not args.local_dir:
-        first_np = items[0][4] if items else ""
-        if not first_np:
-            raise RuntimeError(
-                "ODGT 缺 nori_path 字段, 无法直读取图。
-"
-                "此 ODGT 可能是导出型(跨多 nori), 需用 Fetcher (rlaunch pod)。
-"
-                "建议: 用有 nori_path 的 ODGT, 或在 pod 里跑。"
-            )
     img_bytes_list = []
     all_shapes = []  # (frame, tag, box)
     for i, (nid, w, h, boxes, np) in enumerate(items):
