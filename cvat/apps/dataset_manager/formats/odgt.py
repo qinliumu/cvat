@@ -86,20 +86,35 @@ def _export(dst_file, temp_dir, instance_data, save_images=False):
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
     if save_images:
-        # 把图片也打包进 zip (images/ 目录), 便于完整迁移
+        # 把图片也打包进 zip (images/ 目录), 用 CVAT frame provider 取真实图片字节
+        # (datumaro item.media.data 在 CVAT 里可能为空, 必须用 frame provider)
         images_dir = osp.join(temp_dir, "images")
         os.makedirs(images_dir, exist_ok=True)
-        for item in dataset:
-            if item.media is not None and hasattr(item.media, "path") and item.media.path:
-                src = item.media.path
-                if osp.isfile(src):
-                    dst = osp.join(images_dir, osp.basename(src))
-                    if not osp.exists(dst):
-                        try:
-                            import shutil
-                            shutil.copy2(src, dst)
-                        except Exception:
-                            pass
+        try:
+            from cvat.apps.dataset_manager.formats.cvat import dump_media_files
+            from cvat.apps.dataset_manager.bindings import ProjectData
+            if isinstance(instance_data, ProjectData):
+                for task_data in instance_data.all_task_data:
+                    subset = task_data.db_instance.subset or ""
+                    sub_dir = osp.join(images_dir, subset) if subset else images_dir
+                    os.makedirs(sub_dir, exist_ok=True)
+                    dump_media_files(task_data, sub_dir, instance_data)
+            else:
+                dump_media_files(instance_data, images_dir)
+        except Exception as e:
+            # 兜底: 退化到 datumaro Image.save
+            for item in dataset:
+                if item.media is None:
+                    continue
+                image_name = item.id
+                if hasattr(item.media, "path") and item.media.path:
+                    image_name = osp.splitext(osp.basename(item.media.path))[0]
+                ext = osp.splitext(getattr(item.media, "path", "") or "")[1] or ".jpg"
+                dst = osp.join(images_dir, f"{image_name}{ext}")
+                try:
+                    item.media.save(dst)
+                except Exception:
+                    pass
 
     make_zip_archive(temp_dir, dst_file)
 
