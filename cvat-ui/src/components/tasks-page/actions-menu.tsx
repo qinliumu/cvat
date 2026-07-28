@@ -2,12 +2,13 @@
 //
 // SPDX-License-Identifier: MIT
 
-import React, { useCallback } from 'react';
+import React, { useCallback, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { shallowEqual } from 'utils/redux';
 import { useHistory } from 'react-router';
 import Modal from 'antd/lib/modal';
 import Dropdown from 'antd/lib/dropdown';
+import XcvatExportModal from 'components/xcvat-export-modal';
 
 import {
     RQStatus, Task, User, Organization,
@@ -105,9 +106,13 @@ function TaskActionsComponent(props: Readonly<Props>): JSX.Element {
         dispatch(exportActions.openExportBackupModal(taskInstance));
     }, [taskInstance]);
 
-    // xcvat: Export to Brain++ nori/ODGT via sidecar
+    // xcvat: Export to Brain++ nori/ODGT via sidecar (弹 Modal 让用户指定规范路径)
+    const [xcvatModalVisible, setXcvatModalVisible] = useState(false);
     const onExportNori = useCallback(() => {
-        dispatch(exportNoriAsync(taskInstance));
+        setXcvatModalVisible(true);
+    }, []);
+    const onConfirmXcvatExport = useCallback((params: { group: string; task: string; dtype: string; version: string }) => {
+        dispatch(exportNoriAsync(taskInstance, params));
     }, [taskInstance]);
 
     const onUploadAnnotations = useCallback(() => {
@@ -279,20 +284,29 @@ function TaskActionsComponent(props: Readonly<Props>): JSX.Element {
     }
 
     return (
-        <Dropdown
-            destroyPopupOnHide
-            trigger={dropdownTrigger || ['click']}
-            open={dropdownOpen}
-            onOpenChange={onOpenChange}
-            menu={{
-                selectable: false,
-                className: 'cvat-actions-menu',
-                items: menuItems,
-                onClick: onMenuClick,
-            }}
-        >
-            {triggerElement}
-        </Dropdown>
+        <>
+            <Dropdown
+                destroyPopupOnHide
+                trigger={dropdownTrigger || ['click']}
+                open={dropdownOpen}
+                onOpenChange={onOpenChange}
+                menu={{
+                    selectable: false,
+                    className: 'cvat-actions-menu',
+                    items: menuItems,
+                    onClick: onMenuClick,
+                }}
+            >
+                {triggerElement}
+            </Dropdown>
+            {/* xcvat: Export to nori/ODGT modal */}
+            <XcvatExportModal
+                task={taskInstance}
+                visible={xcvatModalVisible}
+                onClose={() => setXcvatModalVisible(false)}
+                onExport={onConfirmXcvatExport}
+            />
+        </>
     );
 }
 

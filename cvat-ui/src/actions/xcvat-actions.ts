@@ -12,40 +12,47 @@ type ThunkAction = (dispatch: any, getState: any) => Promise<void>;
 const POLL_INTERVAL_MS = 3000;
 const POLL_MAX_ATTEMPTS = 600; // 30 分钟上限
 
+export interface ExportNoriParams {
+    group?: string;
+    task?: string;
+    dtype?: string;
+    version?: string;
+}
+
 export const exportNoriAsync = (
     task: Task,
-    name?: string,
-    category?: string,
+    params?: ExportNoriParams,
 ): ThunkAction => async () => {
     const key = `xcvat-export-${task.id}`;
-    const taskName = name ?? `cvat_export_${task.id}`;
-    const cat = category ?? 'cvat/test';
+    const p = params || {};
 
     try {
         notification.open({
             key,
             message: 'Export to nori/ODGT',
-            description: `Task #${task.id}: submitting (name=${taskName})...`,
+            description: `Task #${task.id}: submitting...`,
             duration: 0,
         });
 
         const resp = await Axios.post('/api/xcvat/export', {
             task_id: task.id,
-            name: taskName,
-            category: cat,
+            group: p.group || '',
+            task: p.task || '',
+            dtype: p.dtype || '',
+            version: p.version || '',
         });
         const jobId: string = resp.data.job_id;
 
         for (let i = 0; i < POLL_MAX_ATTEMPTS; i++) {
             await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
             const s = await Axios.get(`/api/xcvat/status/${jobId}`);
-            const { status, nori, odgt, error } = s.data;
+            const { status, nori, odgt, readme, error } = s.data;
 
             if (status === 'done') {
                 notification.success({
                     key,
                     message: 'Export finished',
-                    description: `nori: ${nori}\nodgt: ${odgt}`,
+                    description: `nori: ${nori}\nodgt: ${odgt}\nreadme: ${readme || '(none)'}`,
                     duration: 0,
                 });
                 return;
