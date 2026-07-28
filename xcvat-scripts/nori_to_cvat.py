@@ -23,12 +23,14 @@ import time
 from pathlib import Path
 
 
-def parse_odgt(odgt_path):
+def parse_odgt(odgt_path, start=0):
     """读 ODGT JSON-lines, 返回 [(ID, width, height, gtboxes), ...]"""
     from refile import smart_open
     items = []
     with smart_open(odgt_path, "r") as f:
-        for line in f:
+        for _line_idx, line in enumerate(f):
+            if _line_idx < start:
+                continue
             line = line.strip()
             if not line:
                 continue
@@ -138,7 +140,26 @@ class CVATClient:
         self.csrf = self.s.cookies.get("csrftoken", "")
         self.h = {"X-CSRFToken": self.csrf}
 
+    def find_project(self, name):
+        """按 name 查 project, 返回 project_id 或 None"""
+        r = self.s.get(f"{self.base}/api/projects", params={"search": name}, headers=self.h)
+        if r.status_code >= 400:
+            return None
+        results = r.json().get("results", [])
+        for proj in results:
+            if proj.get("name") == name:
+                return proj.get("id")
+        return None
+
+    def get_project_task_count(self, pid):
+        """查 project 已有多少 task (用于断点续传算 start)"""
+        r = self.s.get(f"{self.base}/api/tasks", params={"project_id": pid, "page_size": 1}, headers=self.h)
+        if r.status_code >= 400:
+            return 0
+        return r.json().get("count", 0)
+
     def create_project(self, name, labels):
+
         """建 project (同数据集 task 归类), 返回 project_id"""
         body = {"name": name, "labels": [{"name": l} for l in labels]}
         r = self.s.post(f"{self.base}/api/projects", json=body, headers={**self.h, "Content-Type": "application/json"})
@@ -231,18 +252,28 @@ def main():
     ap.add_argument("--local_dir", default="")
     args = ap.parse_args()
 
-    print("[1/4] 读 ODGT")
-    items = parse_odgt(args.odgt)
+    client = CVATClient(args.cvat, args.user, args.password)
+    # 断点续传: 查已有 project, 算 start (已导入图数)
+    project_id = client.find_project(args.task_name)
+    if project_id:
+        existing_tasks = client.get_project_task_count(project_id)
+        start = existing_tasks * args.batch_size
+        print(f"  续传: project {project_id} 已有 {existing_tasks} tasks, 从第 {start+1} 张图继续")
+    else:
+        # 新 project: 先读 ODGT 首2行拿 tags 建 project, 再全量读
+        first_items = parse_odgt(args.odgt, start=0)[:2]
+        tags = collect_tags(first_items)
+        project_id = client.create_project(args.task_name, tags)
+        start = 0
+        if project_id:
+            print(f"  新建 project {project_id}: {args.task_name}")
+
+    print("[1/4] 读 ODGT (从第 %d 张)" % (start+1))
+    items = parse_odgt(args.odgt, start=start)
     if args.max_images > 0:
         items = items[:args.max_images]
     tags = collect_tags(items)
     print(f"  {len(items)} images, {len(tags)} labels, batch_size={args.batch_size}")
-
-    client = CVATClient(args.cvat, args.user, args.password)
-    # 建 project (同数据集 task 归类, 便于多人协作认领)
-    project_id = client.create_project(args.task_name, tags)
-    if project_id:
-        print(f"  project {project_id}: {args.task_name}")
     total_batches = (len(items) + args.batch_size - 1) // args.batch_size
     created_tasks = []
 
