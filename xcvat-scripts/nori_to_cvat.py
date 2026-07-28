@@ -38,6 +38,7 @@ def parse_odgt(odgt_path):
                 rec.get("width", 0),
                 rec.get("height", 0),
                 rec.get("gtboxes", []),
+                rec.get("nori_path", ""),
             ))
     return items
 
@@ -46,7 +47,7 @@ def collect_tags(items):
     """从 ODGT 行收集所有 tag(label), 用于创建 CVAT task 的 labels"""
     tags = []
     seen = set()
-    for _, _, _, boxes in items:
+    for _, _, _, boxes, _ in items:
         for b in boxes:
             tag = b.get("tag", "object")
             if tag not in seen:
@@ -55,11 +56,15 @@ def collect_tags(items):
     return tags
 
 
+_nori_readers = {}
 def fetch_image_bytes(nori_id, nori_path=None):
-    """用 nori.Fetcher 按 DataID 拉图片字节"""
+    """直读取图 (nori.open(r).get, 不走 Fetcher, workspace 可用, 0.6s/图)"""
     import nori2
-    fetcher = nori2.Fetcher()
-    return fetcher.get(nori_id)
+    if not nori_path:
+        raise RuntimeError("nori_path required for direct read")
+    if nori_path not in _nori_readers:
+        _nori_readers[nori_path] = nori2.open(nori_path, "r")
+    return _nori_readers[nori_path].get(nori_id)
 
 
 def fetch_image_local(local_dir, image_id):
@@ -171,7 +176,7 @@ def main():
     print(f"[3/5] 拉图 + 上传 CVAT")
     img_bytes_list = []
     all_shapes = []  # (frame, tag, box)
-    for i, (nid, w, h, boxes) in enumerate(items):
+    for i, (nid, w, h, boxes, np) in enumerate(items):
         try:
             if args.local_dir:
                 # 本地模式: 用 image basename 或索引名匹配
@@ -183,7 +188,7 @@ def main():
                     print(f"  [{i}] skip {nid}: not found in {args.local_dir}")
                     continue
             else:
-                data = fetch_image_bytes(nid)
+                data = fetch_image_bytes(nid, np)
         except Exception as e:
             print(f"  [{i}] skip {nid}: fetch failed {e}")
             continue

@@ -38,70 +38,28 @@ jobs = {}
 
 
 def run_import(job_id, odgt, task_name, max_images):
-    """提交 rlaunch 作业, 在 pod 里跑 nori_to_cvat.py (pod 能用 nori.Fetcher)。
-    sidecar 轮询日志文件判断完成。
-    """
+    """workspace 直接跑 nori_to_cvat.py (直读取图, 不用 rlaunch pod)"""
     jobs[job_id]["status"] = "running"
-    log_file = f"{LOGS_DIR}/import_{job_id}.log"
     try:
-        # pod 内命令: det 环境 + nori_to_cvat.py, CVAT URL 用 workspace IP
-        pod_cmd = (
-            f"source /data/env/miniconda3/etc/profile.d/conda.sh && conda activate det && "
-            f"cd /data/xcvat && python3 -u xcvat-scripts/nori_to_cvat.py "
-            f"--odgt '{odgt}' --task_name '{task_name}' "
-            f"--cvat {CVAT_POD_URL} --user {CVAT_USER} --pass {CVAT_PASS}"
-        )
+        cmd = [sys.executable, f"{SCRIPTS_DIR}/nori_to_cvat.py",
+               "--odgt", odgt, "--task_name", task_name,
+               "--cvat", CVAT_URL, "--user", CVAT_USER, "--pass", CVAT_PASS]
         if max_images and max_images > 0:
-            pod_cmd += f" --max_images {int(max_images)}"
-        pod_cmd += f" > {log_file} 2>&1"
-
-        rlaunch_cmd = [
-            "/kubebrain/rlaunch", "-n", "megvii-jg",
-            "--charged-group=is_jg_bokeh",
-            "--cpu=1", "--gpu=0", "--memory=4096",
-            "--replica-restart=on-failure",
-            "--max-wait-duration=30m",
-            f"--job-name=xcvat-import-{job_id}",
-            "--", "bash", "-lc", pod_cmd,
-        ]
-        # 后台提交 (nohup), 不阻塞 sidecar
-        with open(f"{LOGS_DIR}/rlaunch_{job_id}.log", "w") as rl:
-            subprocess.Popen(["nohup"] + rlaunch_cmd, stdout=rl, stderr=rl,
-                             stdin=subprocess.DEVNULL, start_new_session=True)
-        jobs[job_id]["log_file"] = log_file
-        jobs[job_id]["stage"] = "rlaunch submitted, waiting for pod"
-
-        # 轮询日志文件直到完成或超时 (最长 30 分钟)
-        import time as _t
-        t0 = _t.time()
-        while _t.time() - t0 < 1800:
-            _t.sleep(5)
-            try:
-                with open(log_file, "r") as f:
-                    content = f.read()
-            except FileNotFoundError:
-                content = ""
-            jobs[job_id]["log"] = content[-2000:]
-            # 解析状态
-            if "DONE" in content or "=== DONE ===" in content:
-                for line in content.splitlines():
-                    if "task id=" in line:
-                        tid = line.split("task id=")[-1].split(",")[0].strip()
-                        try:
-                            jobs[job_id]["task_id"] = int(tid)
-                        except ValueError:
-                            pass
-                jobs[job_id]["status"] = "done"
-                return
-            if "Traceback" in content and "Error" in content:
-                # 粗判失败 (日志含 traceback)
-                jobs[job_id]["status"] = "failed"
-                return
-        jobs[job_id]["status"] = "timeout"
+            cmd += ["--max_images", str(max_images)]
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+        jobs[job_id]["log"] = (r.stdout + r.stderr)[-3000:]
+        if r.returncode != 0:
+            jobs[job_id]["status"] = "failed"
+            return
+        for line in r.stdout.splitlines():
+            if "task id=" in line:
+                tid = line.split("task id=")[-1].split(",")[0].strip()
+                try: jobs[job_id]["task_id"] = int(tid)
+                except: pass
+        jobs[job_id]["status"] = "done"
     except Exception as e:
         jobs[job_id]["status"] = "failed"
         jobs[job_id]["log"] = str(e)
-
 
 def run_export(job_id, task_id, name, category, group, task, dtype, version):
     jobs[job_id]["status"] = "running"
