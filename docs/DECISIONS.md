@@ -52,7 +52,7 @@
 ## ADR-003 upstream 同步策略
 
 - **日期**:2026-07-27
-- **状态**:待执行(等 GitHub fork)
+- **状态**:✅ 已执行(2026-07-28)
 
 **背景**:fork 魔改必须规划 upstream 同步,否则分叉失控,半年后合并成本指数级上升。
 
@@ -66,10 +66,22 @@
 5. 魔改文件在头部标注 `# xcvat: <原因>`,便于升级时定位冲突点
 6. 核心 model/API 的魔改单独留 ADR,评估升级影响
 
+**执行结果(2026-07-28)**:
+- GitHub fork:`https://github.com/qinliumu/cvat`(用户 qinliumu)
+- hermes remote:`origin` → `git@github.com:qinliumu/cvat.git`(SSH),`upstream` → `https://github.com/cvat-ai/cvat.git`
+- 魔改集成分支:`xcvat/main`(基于 develop@170ce0ad7),已 push 到 fork
+- 首个 commit:`b2c081057 docs: add xcvat project charter and memory infrastructure`(CLAUDE.md + docs/)
+- SSH 认证:hermes 生成 ed25519 key,公钥已加到 GitHub;`~/.ssh/config` 配 `ProxyCommand nc -X 5 -x 127.0.0.1:1080`(github SSH 走 xray socks 1080,因 hermes 无公网)
+
+**配套基础设施**:
+- git http.proxy 已 unset(SSH 方式不需要 http 代理)
+- `~/.ssh/config` 的 github.com 走 xray socks5(1080),StrictHostKeyChecking accept-new
+- `.env`、`cvat-tunnel.bat` 被 .gitignore 忽略(`/*env*/`、`/.*env*`),本地配置不入库,符合预期
+
 **后果**:
 - upstream 升级时合并成本可控(文件级冲突可定位)
 - 需纪律性定期同步(建议每月或每个 upstream release)
-- 执行前不动 git remote
+- ✅ 已执行
 
 ---
 

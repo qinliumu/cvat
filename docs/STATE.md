@@ -4,35 +4,74 @@
 
 ## 当前任务
 
-在 hermes workspace 上部署 CVAT;conda det 环境已就绪,下一步装 docker。
+阶段 0(git 基础设施)完成。下一步:阶段 1,写 ODGT format 文件。
 
 ## 已完成
 
-- [x] clone cvat-ai/cvat 完整性校验:主仓库完整,非浅克隆,114,652 objects,.git 367M
-- [x] 确认分支同步:develop@170ce0ad7,与 origin/develop 零 ahead/behind
-- [x] 确认子模块 `site/themes/docsy` 未初始化(文档站主题,跑 CVAT 不需要)
-- [x] 确认无 LFS 跟踪文件(无漏拉风险)
-- [x] 确认 fork 基线:tag v2.71.0
-- [x] 建立记忆设施:`CLAUDE.md` / `docs/STATE.md` / `docs/DECISIONS.md` / `docs/ARCHITECTURE.md`
-- [x] 实测 codex/hermes workspace 环境(见 ADR-004)
-- [x] 确认部署形态:codex workspace + docker(ADR-004)
-- [x] 新建 hermes workspace,实测:/data 1.0T 空(剩 1023G)、systemd、sudo 完整 caps、无 docker
-- [x] hermes 建实验目录 `/data/xcvat/{cvat,cvat-data,logs,scripts}`
-- [x] 测通 codex→hermes ssh(agent forwarding),hermes→codex 不通(publickey)
-- [x] rsync 复制 codex `/data/env`(29G)→ hermes,保持同路径
-- [x] 修复 conda 路径硬编码:建软链 `/data/miniconda3 -> /data/env/miniconda3`
-- [x] 验证 hermes conda det 环境:nori2/refile/brainpp.oss/meghair 全部 import OK
+- [x] CVAT 部署到 hermes(18 容器全 Up,admin/admin,SSH 隧道访问 localhost:8080)
+- [x] 阶段 0:GitHub fork(qinliumu/cvat)+ remote 调整(SSH)+ xcvat/main 分支 + 首个 commit
+- [x] 记忆设施:CLAUDE.md + docs/(已提交 b2c081057)
+
+## 下一步(阶段 1:ODGT format)
+
+- [ ] 写 `cvat/apps/dataset_manager/formats/odgt.py`(参考 widerface.py + odgt skill 规范)
+- [ ] registry.py 注册
+- [ ] 重建 cvat/server 镜像 或 volume 挂载热加载
+- [ ] 验证:CVAT 导出/导入格式下拉出现 ODGT
+- [ ] commit + push 到 fork
+
+## 阶段路线(已批准方案)
+
+- 阶段 1:ODGT format 文件(容器内)← 进行中
+- 阶段 2:nori→CVAT 导入脚本(宿主机 det 环境)
+- 阶段 3:CVAT→nori/ODGT 导出脚本(宿主机)
+- 阶段 4:UI 按钮 + sidecar HTTP 服务
+
+## 已完成
+
+- [x] clone cvat-ai/cvat 完整性校验
+- [x] 建立记忆设施:CLAUDE.md + docs/
+- [x] 实测 codex/hermes workspace 环境(ADR-004)
+- [x] 新建 hermes workspace,建实验目录 `/data/xcvat/`
+- [x] rsync 复制 conda det 环境(29G)+ 修复路径软链
+- [x] 验证 nori2/refile/brainpp.oss/meghair import OK
+- [x] 推 CVAT 源码到 hermes `/data/xcvat/cvat/`(410M,含 .git)
+- [x] 装 docker + 解决 iptables-legacy 坑,data-root 迁 /data
+- [x] 搭建 xray 代理(systemd 服务,docker 域名走 vless 翻墙),docker daemon 配 HTTP_PROXY
+- [x] 拉 CVAT 全部 10 个镜像(v2.71.0),`docker compose up -d` 起 18 容器全 Up
+- [x] 创建管理员 admin/admin(superuser)
+- [x] 排查办公网无法访问:`100.123.228.217:8080` 内网 IP 办公网够不着,Brain++ 只通过 kubebrain 网关暴露预配置服务(jupyter),自定义端口无外部入口
+- [x] 采用方案 A:CVAT_HOST 改 localhost,SSH 端口转发供调试
+
+## 访问方式(调试期,方案 A)
+
+```bash
+# 本地电脑终端跑(保持不关):
+ssh -L 8080:localhost:8080 qinsenlinhermes.g-qinsenlin.megvii-jg.ws@hh-d.brainpp.cn
+# 然后浏览器:http://localhost:8080  (admin/admin)
+```
+- CVAT_HOST=localhost(traefik 路由匹配 localhost)
+- 单人调试用;多人需走方案 C(找 Brain++ 管理员配 kubebrain 网关入口或开放防火墙)
 
 ## 下一步
 
-- [ ] hermes 安装 docker + docker compose(systemd 托管)
-- [ ] 推 CVAT 源码到 hermes `/data/xcvat/cvat`(本地 131M + .git 367M)
-- [ ] 验证标注员网络可达性(`100.121.177.210:8080` 或 SSH 转发 / Traefik)
-- [ ] 起最小 CVAT(`docker compose up -d`),浏览器打开登录页
+- [ ] 用户浏览器验证 http://localhost:8080 能登录
 - [ ] nori → CVAT 数据导入桥(ADR 待立)
 - [ ] 在 GitHub fork cvat-ai/cvat,调整 remote(ADR-003 执行)
 - [ ] 建立长期魔改集成分支
+- [ ] 明确项目正式代号与具体定制场景
+
+## 环境关键事实(hermes)
+
+- **网络**:IP `100.123.228.217`,Brain++ 内网;**办公网无法直连该 IP:8080**(只同集群如 codex 可达)。对外只能通过 Brain++ 网关(kubebrain.io)暴露预配置服务(jupyter base_url=`/kapi/workspace.kubebrain.io/megvii-jg/ws-4601ffe6c8a5ce6a/jupyter`),自定义端口无现成外部入口
+- **OS**:Ubuntu 22.04 LTS x86_64,systemd PID1,sudo 免密 + 完整 caps
+- **磁盘**:/data 1.0T,docker 数据在 `/data/docker-data`
+- **conda det**:已就绪,nori 桥接依赖 import OK
+- **CVAT 源码**:`/data/xcvat/cvat/`(410M,含 .git,HEAD=170ce0ad7,基线 v2.71.0)
+- **docker**:29.1.3 + compose 2.40.3,iptables-legacy,data-root=/data/docker-data
+- **xray 代理**:systemd `xray-proxy.service`,1080/1081,docker 域名走 vless 翻墙
+- **CVAT 部署**:`.env` CVAT_VERSION=v2.71.0 + CVAT_HOST=localhost,18 容器全 Up,localhost:8080 可访问(admin/admin)
 
 ## 上次会话摘要
 
-**2026-07-27**:校验 CVAT clone 完整性。确认项目方向 —— fork 魔改 CVAT,独立于 xlabel。建立记忆设施。读取 ssh-server / odgt-data-upload skill,摸清 Brain++ 平台。实测 codex workspace:sudo 完整 caps、systemd、mount/overlay 支持 → docker 可起。用户澄清 workspace 持久。决策方案 B:codex workspace 装 docker 跑 CVAT(ADR-004)。随后用户新建 hermes workspace(/data 1.0T 空),定 CVAT+nori 桥接定位、rsync 复制环境。完成:建实验目录 `/data/xcvat/`、测通 codex→hermes ssh、rsync 29G conda 环境、修复路径硬编码(建 `/data/miniconda3` 软链)、验证 nori2/refile/brainpp.oss/meghair 全 import OK。
+**2026-07-27~28**:完成 CVAT 在 hermes 上的部署。路径:校验 clone → 建记忆设施 → 实测环境 → 方案 B workspace+docker(ADR-004)→ rsync conda 环境+软链修复 → 推 CVAT 源码 → 装 docker(iptables-legacy 坑)→ 搭 xray 代理(从 codex 搬,加 docker 域名到 vless 翻墙,systemd 服务)→ 拉 10 镜像 → compose up 18 容器 → 建 admin/admin。**访问问题**:办公网够不着 hermes 内网 IP(只同集群可达),Brain++ 网关只暴露预配置服务。采用方案 A:CVAT_HOST=localhost + SSH 端口转发,localhost:8080 验证 200。
