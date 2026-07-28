@@ -176,6 +176,17 @@ def main():
     print(f"  task id={tid}, label_map={label_map}")
 
     print(f"[3/5] 拉图 + 上传 CVAT")
+    # 检查 ODGT 是否有 nori_path (直读需要; 无则报错)
+    if not args.local_dir:
+        first_np = items[0][4] if items else ""
+        if not first_np:
+            raise RuntimeError(
+                "ODGT 缺 nori_path 字段, 无法直读取图。
+"
+                "此 ODGT 可能是导出型(跨多 nori), 需用 Fetcher (rlaunch pod)。
+"
+                "建议: 用有 nori_path 的 ODGT, 或在 pod 里跑。"
+            )
     img_bytes_list = []
     all_shapes = []  # (frame, tag, box)
     for i, (nid, w, h, boxes, np) in enumerate(items):
@@ -201,6 +212,8 @@ def main():
         if (i + 1) % 10 == 0:
             print(f"  fetched {i + 1}/{len(items)}")
 
+    if not img_bytes_list:
+        raise RuntimeError("没有图片被拉取(全部 fetch 失败), 检查 nori_path 或网络")
     print(f"  uploading {len(img_bytes_list)} images...")
     size = client.upload_images(tid, img_bytes_list)
     print(f"  uploaded, task size={size}")
