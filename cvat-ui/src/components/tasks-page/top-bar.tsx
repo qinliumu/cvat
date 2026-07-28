@@ -15,6 +15,8 @@ import {
 import Button from 'antd/lib/button';
 import Input from 'antd/lib/input';
 import { importActions } from 'actions/import-actions';
+import { importNoriAsync } from 'actions/xcvat-actions';
+import XcvatImportModal from 'components/xcvat-import-modal';
 import {
     SortingComponent,
     ResourceFilterHOC,
@@ -52,6 +54,7 @@ export default function TopBarComponent(props: Readonly<VisibleTopBarProps>): JS
         selectedCount, onSelectAll,
     } = props;
     const [visibility, setVisibility] = useState(defaultVisibility);
+    const [xcvatImportVisible, setXcvatImportVisible] = useState(false);
     const history = useHistory();
     const prevImporting = usePrevious(importing);
 
@@ -138,6 +141,21 @@ export default function TopBarComponent(props: Readonly<VisibleTopBarProps>): JS
                                 >
                                     Create multi tasks
                                 </Button>
+                                <Button
+                                    className='cvat-import-nori-button'
+                                    type='primary'
+                                    onClick={(): void => setXcvatImportVisible(true)}
+                                    icon={<UploadOutlined />}
+                                >
+                                    Import from nori/ODGT
+                                </Button>
+                                <XcvatImportModal
+                                    visible={xcvatImportVisible}
+                                    onClose={(): void => setXcvatImportVisible(false)}
+                                    onImport={(params): void => {
+                                        dispatch(importNoriAsync(params.odgt, params.task_name, params.max_images));
+                                    }}
+                                />
                                 <Button
                                     className='cvat-import-task-button'
                                     type='primary'

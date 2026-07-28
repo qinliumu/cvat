@@ -23,35 +23,77 @@ HOST, PORT = "0.0.0.0", 9580
 SCRIPTS_DIR = "/data/xcvat/xcvat-scripts"
 BUILD_SCRIPT = "/data/xcvat/scripts/build_online_dataset.py"
 CVAT_URL = os.environ.get("CVAT_URL", "http://localhost:8080")
+# pod 访问 workspace 的 URL (同集群, workspace IP); pod 里跑 nori_to_cvat 用这个
+CVAT_POD_URL = os.environ.get("CVAT_POD_URL", "http://100.123.228.217:8080")
 CVAT_USER = os.environ.get("CVAT_USER", "admin")
 CVAT_PASS = os.environ.get("CVAT_PASS", "admin")
+LOGS_DIR = "/data/xcvat/logs"
 
 # job 存储 (进程内, 简单起见; 重启丢失)
 jobs = {}
 
 
 def run_import(job_id, odgt, task_name, max_images):
+    """提交 rlaunch 作业, 在 pod 里跑 nori_to_cvat.py (pod 能用 nori.Fetcher)。
+    sidecar 轮询日志文件判断完成。
+    """
     jobs[job_id]["status"] = "running"
+    log_file = f"{LOGS_DIR}/import_{job_id}.log"
     try:
-        cmd = [sys.executable, f"{SCRIPTS_DIR}/nori_to_cvat.py",
-               "--odgt", odgt, "--task_name", task_name,
-               "--cvat", CVAT_URL, "--user", CVAT_USER, "--pass", CVAT_PASS]
+        # pod 内命令: det 环境 + nori_to_cvat.py, CVAT URL 用 workspace IP
+        pod_cmd = (
+            f"source /data/env/miniconda3/etc/profile.d/conda.sh && conda activate det && "
+            f"cd /data/xcvat && python3 -u xcvat-scripts/nori_to_cvat.py "
+            f"--odgt '{odgt}' --task_name '{task_name}' "
+            f"--cvat {CVAT_POD_URL} --user {CVAT_USER} --pass {CVAT_PASS}"
+        )
         if max_images and max_images > 0:
-            cmd += ["--max_images", str(max_images)]
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-        jobs[job_id]["log"] = r.stdout + r.stderr
-        if r.returncode != 0:
-            jobs[job_id]["status"] = "failed"
-            return
-        # 从输出解析 task id
-        for line in r.stdout.splitlines():
-            if "task id=" in line:
-                tid = line.split("task id=")[-1].split(",")[0].strip()
-                jobs[job_id]["task_id"] = int(tid)
-            if "DONE" in line:
+            pod_cmd += f" --max_images {int(max_images)}"
+        pod_cmd += f" > {log_file} 2>&1"
+
+        rlaunch_cmd = [
+            "/kubebrain/rlaunch", "-n", "megvii-jg",
+            "--charged-group=is_jg_bokeh",
+            "--cpu=2", "--gpu=0", "--memory=8192",
+            "--replica-restart=on-failure",
+            "--max-wait-duration=30m",
+            f"--job-name=xcvat-import-{job_id}",
+            "--", "bash", "-lc", pod_cmd,
+        ]
+        # 后台提交 (nohup), 不阻塞 sidecar
+        with open(f"{LOGS_DIR}/rlaunch_{job_id}.log", "w") as rl:
+            subprocess.Popen(["nohup"] + rlaunch_cmd, stdout=rl, stderr=rl,
+                             stdin=subprocess.DEVNULL, start_new_session=True)
+        jobs[job_id]["log_file"] = log_file
+        jobs[job_id]["stage"] = "rlaunch submitted, waiting for pod"
+
+        # 轮询日志文件直到完成或超时 (最长 30 分钟)
+        import time as _t
+        t0 = _t.time()
+        while _t.time() - t0 < 1800:
+            _t.sleep(5)
+            try:
+                with open(log_file, "r") as f:
+                    content = f.read()
+            except FileNotFoundError:
+                content = ""
+            jobs[job_id]["log"] = content[-2000:]
+            # 解析状态
+            if "DONE" in content or "=== DONE ===" in content:
+                for line in content.splitlines():
+                    if "task id=" in line:
+                        tid = line.split("task id=")[-1].split(",")[0].strip()
+                        try:
+                            jobs[job_id]["task_id"] = int(tid)
+                        except ValueError:
+                            pass
                 jobs[job_id]["status"] = "done"
                 return
-        jobs[job_id]["status"] = "done"
+            if "Traceback" in content and "Error" in content:
+                # 粗判失败 (日志含 traceback)
+                jobs[job_id]["status"] = "failed"
+                return
+        jobs[job_id]["status"] = "timeout"
     except Exception as e:
         jobs[job_id]["status"] = "failed"
         jobs[job_id]["log"] = str(e)
